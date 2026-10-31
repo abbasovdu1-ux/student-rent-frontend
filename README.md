@@ -14,7 +14,7 @@ Nutzer können durch verschiedene Wohnungs- und WG-Angebote scrollen und bei Int
 
 So verbindet StudentRent die intuitive Bedienung moderner Social-Media-Plattformen mit der klassischen Wohnungssuche.
 
-## ✨ Geplante Funktionen
+## ✨ Fertige Funktionen
 
 - 📱 **Swipe-Feed:** Wohnungsangebote in einem vertikal scrollbaren Feed entdecken
 - 🏡 **Detailansicht:** Ausführliche Informationen zu Wohnungen und WG-Zimmern anzeigen
