@@ -18,7 +18,7 @@ const fetchApartments = async () => {
 
 // Wird automatisch beim Laden der Seite aufgerufen
 onMounted(() => {
-  fetchApartments()
+  fetchApartments() // sendet GET request api/apartments
 })
 </script>
 
