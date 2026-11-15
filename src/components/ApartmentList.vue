@@ -1,7 +1,15 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 
-// --- STATE ---
+// --- NUTZER / AUTH STATE ---
+const currentUser = ref(null) // { name: '...', phone: '...' } oder null (= Gast)
+const authModal = ref(false)
+const authName = ref('')
+const authPhone = ref('')
+const authError = ref('')
+const pendingActionAfterLogin = ref(null) // z.B. 'add' falls man als Gast auf "+ Inserieren" klickt
+
+// --- APARTMENTS & UI STATE ---
 const apartments = ref([])
 const loading = ref(true)
 const lang = ref('de')
@@ -20,13 +28,14 @@ const filterType = ref('ALL')
 // Modals
 const detailItem = ref(null)
 const selectedLandlord = ref(null)
+const favoritesModal = ref(false)
 const filterModal = ref(false)
 const addModal = ref(false)
 const settingsModal = ref(false)
 const isPublishing = ref(false)
 const formError = ref('')
 
-// Formular für neues Inserat (entspricht 1:1 den Feldern in Apartment.java)
+// Formular für neues Inserat
 const newTitle = ref('')
 const newPriceRaw = ref('')
 const pricePeriod = ref('Monat')
@@ -34,9 +43,7 @@ const newType = ref('Langzeit')
 const newCity = ref('')
 const newDistrict = ref('')
 const newSpace = ref('')
-const newPhone = ref('')
 const newDesc = ref('')
-const newLandlordName = ref('')
 const newImageUrl = ref('')
 
 const API_URL = 'https://student-rent-project.onrender.com/api/apartments'
@@ -46,23 +53,31 @@ const TRANSLATIONS = {
   de: {
     filters: 'Filter',
     nearby: 'In deiner Nähe',
-    allFeeds: 'Alle',
+    login: 'Anmelden',
+    guest: 'Gast',
+    logout: 'Abmelden',
+    myAccount: 'Mein Konto',
+    loginTitle: 'Konto anmelden',
+    loginSubtitle: 'Melde dich mit Name und Handynummer an, um Wohnungen zu inserieren und eigene Anzeigen zu verwalten.',
+    phoneRequired: 'Bitte Name und gültige Handynummer eingeben!',
+    saveAccount: 'Weiter & Anmelden',
+    favorites: 'Favoriten',
+    noFavorites: 'Du hast noch keine Wohnungen mit ♥ markiert.',
     longTerm: 'Langzeit',
     shortTerm: 'Kurzzeit',
     call: 'Anrufen',
     whatsapp: 'WhatsApp',
     showDetails: 'Details anzeigen',
     close: 'Schließen',
-    delete: 'Löschen',
+    delete: 'Eigene Anzeige löschen',
     apply: 'Filter anwenden',
     reset: 'Zurücksetzen',
     publish: 'Inserat veröffentlichen',
     publishing: 'Wird gespeichert...',
     newListing: 'Inserieren',
     parameters: 'Angaben',
-    available: 'Verfügbar ab',
-    mandatoryError: 'Bitte Titel, Preis, Stadt und deinen Namen ausfüllen!',
-    verified: 'Konto aktiv',
+    mandatoryError: 'Bitte Titel, Preis und Stadt ausfüllen!',
+    verified: 'Telefon hinterlegt',
     memberSince: 'Mitglied seit',
     perMonth: '/ Monat',
     perDay: '/ Tag',
@@ -75,28 +90,36 @@ const TRANSLATIONS = {
     description: 'Beschreibung',
     otherListings: 'Alle Inserate von',
     noResults: 'Noch keine passenden Wohnungen vorhanden.',
-    loading: 'Lade Wohnungen aus PostgreSQL...'
+    loading: 'Lade Wohnungen...'
   },
   ru: {
     filters: 'Фильтры',
     nearby: 'Рядом',
-    allFeeds: 'Все',
+    login: 'Войти',
+    guest: 'Гость',
+    logout: 'Выйти',
+    myAccount: 'Мой аккаунт',
+    loginTitle: 'Вход в аккаунт',
+    loginSubtitle: 'Укажите имя и номер телефона, чтобы публиковать объявления и управлять ими.',
+    phoneRequired: 'Введите имя и номер телефона!',
+    saveAccount: 'Войти и продолжить',
+    favorites: 'Избранное',
+    noFavorites: 'Вы ещё не добавили квартиры в избранное (♥).',
     longTerm: 'Долгосрок',
     shortTerm: 'Посуточно',
     call: 'Позвонить',
     whatsapp: 'WhatsApp',
     showDetails: 'Подробнее',
     close: 'Закрыть',
-    delete: 'Удалить',
+    delete: 'Удалить своё объявление',
     apply: 'Применить',
     reset: 'Сбросить',
     publish: 'Опубликовать',
     publishing: 'Сохранение...',
     newListing: 'Создать',
     parameters: 'Параметры',
-    available: 'Доступно',
-    mandatoryError: 'Заполните название, цену, город и ваше имя!',
-    verified: 'Аккаунт активен',
+    mandatoryError: 'Заполните название, цену и город!',
+    verified: 'Телефон подтвержден',
     memberSince: 'В сервисе с',
     perMonth: '/ мес',
     perDay: '/ день',
@@ -109,13 +132,59 @@ const TRANSLATIONS = {
     description: 'Описание',
     otherListings: 'Все объявления от',
     noResults: 'Подходящих квартир пока нет.',
-    loading: 'Загрузка из PostgreSQL...'
+    loading: 'Загрузка...'
   }
 }
 
 const t = computed(() => TRANSLATIONS[lang.value])
 
-// Echte Zeitberechnung aus dem Server-Timestamp (Instant createdAt)
+// --- AUTH LOGIK ---
+const handleLoginSubmit = () => {
+  if (!authName.value.trim() || authPhone.value.trim().length < 6) {
+    authError.value = t.value.phoneRequired
+    return
+  }
+  authError.value = ''
+  const userObj = {
+    name: authName.value.trim(),
+    phone: authPhone.value.trim()
+  }
+  currentUser.value = userObj
+  localStorage.setItem('studentrent_user', JSON.stringify(userObj))
+  authModal.value = false
+
+  if (pendingActionAfterLogin.value === 'add') {
+    pendingActionAfterLogin.value = null
+    addModal.value = true
+  }
+}
+
+const handleLogout = () => {
+  currentUser.value = null
+  localStorage.removeItem('studentrent_user')
+  settingsModal.value = false
+}
+
+const openAddListingFlow = () => {
+  if (!currentUser.value) {
+    pendingActionAfterLogin.value = 'add'
+    authError.value = ''
+    authModal.value = true
+  } else {
+    addModal.value = true
+  }
+}
+
+// Prüft, ob die Anzeige dem aktuell eingeloggten Nutzer gehört
+const isOwnListing = (item) => {
+  if (!currentUser.value) return false
+  return (
+    item.landlordName &&
+    item.landlordName.toLowerCase() === currentUser.value.name.toLowerCase()
+  )
+}
+
+// --- ZEITBERECHNUNG ---
 const getRelativeTimeString = (isoTimestamp) => {
   if (!isoTimestamp) return lang.value === 'de' ? 'Neu' : 'Новое'
   const createdMs = new Date(isoTimestamp).getTime()
@@ -138,16 +207,15 @@ const getRelativeTimeString = (isoTimestamp) => {
 
 const DEFAULT_FALLBACK_IMAGE = 'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=1000'
 
-// --- 1. GET: ECHTE DATEN VOM BACKEND LADEN ---
+// --- 1. GET: DATEN VOM BACKEND LADEN ---
 const fetchListings = async () => {
   loading.value = true
   try {
     const res = await fetch(API_URL)
     const data = await res.json()
-    // Neueste Inserate (höchste ID) zuerst anzeigen
     apartments.value = [...data].sort((a, b) => (b.id || 0) - (a.id || 0))
   } catch (err) {
-    console.error('Fehler beim Laden vom Backend:', err)
+    console.error('Fehler beim Laden:', err)
   } finally {
     loading.value = false
   }
@@ -196,7 +264,7 @@ const toggleNearby = () => {
   )
 }
 
-// --- GEFILTERTE LISTE ---
+// --- COMPUTED LISTS ---
 const filteredApartments = computed(() => {
   return apartments.value.filter((apt) => {
     if (activeFeedMode.value === 'nearby' && userCity.value) {
@@ -210,7 +278,10 @@ const filteredApartments = computed(() => {
   })
 })
 
-// Alle echten Inserate eines Vermieters aus der Datenbank
+const favoriteApartments = computed(() => {
+  return apartments.value.filter((apt) => favorites.value.has(apt.id))
+})
+
 const landlordListings = computed(() => {
   if (!selectedLandlord.value) return []
   return apartments.value.filter(
@@ -225,9 +296,15 @@ const openLandlordProfile = (apt) => {
   }
 }
 
-// --- 2. POST: NEUES INSERAT DAUERHAFT IN POSTGRESQL SPEICHERN ---
+// --- 2. POST: NEUES INSERAT SPEICHERN ---
 const handleAddListing = async () => {
-  if (!newTitle.value.trim() || !newPriceRaw.value || !newCity.value.trim() || !newLandlordName.value.trim()) {
+  if (!currentUser.value) {
+    addModal.value = false
+    authModal.value = true
+    return
+  }
+
+  if (!newTitle.value.trim() || !newPriceRaw.value || !newCity.value.trim()) {
     formError.value = t.value.mandatoryError
     return
   }
@@ -243,10 +320,10 @@ const handleAddListing = async () => {
     city: newCity.value.trim(),
     district: newDistrict.value.trim() || 'Zentrum',
     space: newSpace.value ? `${newSpace.value} m²` : null,
-    phone: newPhone.value.trim() || null,
+    phone: currentUser.value.phone, // Handynummer kommt verpflichtend aus dem Account
     description: newDesc.value.trim() || null,
     imageUrl: newImageUrl.value.trim() || null,
-    landlordName: newLandlordName.value.trim(),
+    landlordName: currentUser.value.name,
     memberSince: new Date().getFullYear().toString()
   }
 
@@ -263,9 +340,7 @@ const handleAddListing = async () => {
       newCity.value = ''
       newDistrict.value = ''
       newSpace.value = ''
-      newPhone.value = ''
       newDesc.value = ''
-      newLandlordName.value = ''
       newImageUrl.value = ''
       addModal.value = false
       await fetchListings()
@@ -279,23 +354,38 @@ const handleAddListing = async () => {
   }
 }
 
-// --- 3. DELETE: ECHTES LÖSCHEN IN POSTGRESQL ---
-const handleDelete = async (id) => {
-  if (!confirm('Dieses Inserat endgültig aus der Datenbank löschen?')) return
+// --- 3. DELETE: NUR EIGENE INSERATE LÖSCHEN ---
+const handleDelete = async (item) => {
+  if (!isOwnListing(item)) return
+  if (!confirm('Möchtest du dein Inserat wirklich löschen?')) return
+
   try {
-    const res = await fetch(`${API_URL}/${id}`, { method: 'DELETE' })
+    const res = await fetch(`${API_URL}/${item.id}`, { method: 'DELETE' })
     if (res.ok) {
-      apartments.value = apartments.value.filter((item) => item.id !== id)
-      if (detailItem.value?.id === id) detailItem.value = null
+      apartments.value = apartments.value.filter((a) => a.id !== item.id)
+      favorites.value.delete(item.id)
+      saveFavorites()
+      if (detailItem.value?.id === item.id) detailItem.value = null
     }
   } catch (err) {
     console.error('Fehler beim Löschen:', err)
   }
 }
 
+// --- FAVORITEN SPEICHERN ---
+const saveFavorites = () => {
+  localStorage.setItem('studentrent_favs', JSON.stringify(Array.from(favorites.value)))
+}
+
 const toggleFavorite = (id) => {
   if (favorites.value.has(id)) favorites.value.delete(id)
   else favorites.value.add(id)
+  saveFavorites()
+}
+
+const openFavoriteListing = (apt) => {
+  favoritesModal.value = false
+  detailItem.value = apt
 }
 
 const resetFilters = () => {
@@ -308,6 +398,19 @@ const resetFilters = () => {
 }
 
 onMounted(() => {
+  // Gespeicherten Account & Favoriten wiederherstellen
+  const savedUser = localStorage.getItem('studentrent_user')
+  if (savedUser) {
+    try {
+      currentUser.value = JSON.parse(savedUser)
+    } catch {}
+  }
+  const savedFavs = localStorage.getItem('studentrent_favs')
+  if (savedFavs) {
+    try {
+      favorites.value = new Set(JSON.parse(savedFavs))
+    } catch {}
+  }
   fetchListings()
 })
 </script>
@@ -317,22 +420,47 @@ onMounted(() => {
     <!-- Schwebende Top-Bar -->
     <header class="top-bar">
       <div class="top-left-group">
-        <button class="pill-btn" @click="filterModal = true">
+        <button class="pill-btn" @click="filterModal = true" title="Filter">
           ▽ {{ t.filters }}
         </button>
+
         <button
           :class="['pill-btn', { 'pill-active': activeFeedMode === 'nearby' }]"
           @click="toggleNearby"
         >
           📍 {{ locationLoading ? '...' : userCity && activeFeedMode === 'nearby' ? userCity : t.nearby }}
         </button>
+
+        <!-- Favoriten-Button oben -->
+        <button class="pill-btn" @click="favoritesModal = true" :title="t.favorites">
+          <span style="color: #FF3B30;">♥</span> {{ favoriteApartments.length }}
+        </button>
       </div>
 
       <div class="top-right-group">
+        <!-- Gast / Account Button -->
+        <button
+          v-if="!currentUser"
+          class="pill-btn"
+          @click="pendingActionAfterLogin = null; authModal = true"
+        >
+          👤 {{ t.login }}
+        </button>
+        <button
+          v-else
+          class="user-pill-btn"
+          @click="settingsModal = true"
+          :title="t.myAccount"
+        >
+          <span class="user-dot">{{ currentUser.name.charAt(0).toUpperCase() }}</span>
+          <span class="user-label">{{ currentUser.name }}</span>
+        </button>
+
         <button class="circle-icon-btn" @click="settingsModal = true" title="Einstellungen">
           ⚙
         </button>
-        <button class="insert-btn" @click="addModal = true">
+
+        <button class="insert-btn" @click="openAddListingFlow">
           ＋ {{ t.newListing }}
         </button>
       </div>
@@ -346,7 +474,7 @@ onMounted(() => {
 
       <div v-else-if="filteredApartments.length === 0" class="empty-screen">
         <p>{{ t.noResults }}</p>
-        <button class="insert-btn" @click="addModal = true">＋ {{ t.newListing }}</button>
+        <button class="insert-btn" @click="openAddListingFlow">＋ {{ t.newListing }}</button>
       </div>
 
       <section
@@ -355,19 +483,23 @@ onMounted(() => {
         :key="item.id"
         class="reel-card"
       >
-        <!-- Hintergrundbild (echte imageUrl oder Standard-Bild) -->
         <img
           :src="item.imageUrl || DEFAULT_FALLBACK_IMAGE"
           class="reel-image"
           alt="Apartment"
         />
 
-        <!-- Dunkler Verlauf unten -->
         <div class="overlay-gradient"></div>
 
         <!-- Rechte Floating-Buttons -->
         <div class="right-floating-bar">
-          <button class="float-circle" @click="handleDelete(item.id)" :title="t.delete">
+          <!-- Papierkorb NUR sichtbar für den eigenen Ersteller! -->
+          <button
+            v-if="isOwnListing(item)"
+            class="float-circle delete-own"
+            @click="handleDelete(item)"
+            :title="t.delete"
+          >
             🗑
           </button>
 
@@ -380,14 +512,13 @@ onMounted(() => {
 
         <!-- Unterer Content-Bereich -->
         <div class="bottom-overlay">
-          <!-- Klickbares Vermieter-Konto -->
           <div class="landlord-chip" @click="openLandlordProfile(item)">
             <div class="mini-avatar">{{ (item.landlordName || 'S').charAt(0).toUpperCase() }}</div>
             <span>{{ item.landlordName || 'Student_Vermieter' }}</span>
-            <span class="since-tag">· seit {{ item.memberSince || '2026' }}</span>
+            <span v-if="isOwnListing(item)" class="own-tag">(Du)</span>
+            <span v-else class="since-tag">· seit {{ item.memberSince || '2026' }}</span>
           </div>
 
-          <!-- Badges Row -->
           <div class="badge-row">
             <span class="badge-orange">
               {{ (item.type || 'Langzeit') === 'Langzeit' ? t.longTerm : t.shortTerm }}
@@ -415,7 +546,67 @@ onMounted(() => {
       </section>
     </main>
 
-    <!-- MODAL 1: DETAILS ANZEIGEN -->
+    <!-- MODAL 1: ANMELDUNG (NAME + PFLICHT-HANDYNUMMER) -->
+    <div v-if="authModal" class="sheet-backdrop" @click.self="authModal = false">
+      <div class="bottom-sheet" :class="{ 'light-theme': !isDarkMode }">
+        <div class="drag-bar"></div>
+        <h3>👤 {{ t.loginTitle }}</h3>
+        <p class="member-sub" style="margin-bottom: 14px;">{{ t.loginSubtitle }}</p>
+
+        <p v-if="authError" class="error-banner">{{ authError }}</p>
+
+        <input
+          v-model="authName"
+          placeholder="Dein Name / Nutzername *"
+          class="sheet-input"
+        />
+        <input
+          v-model="authPhone"
+          type="tel"
+          placeholder="Deine Handynummer (z. B. +49 170 1234567) *"
+          class="sheet-input"
+        />
+
+        <button class="primary-action full-w" @click="handleLoginSubmit">
+          {{ t.saveAccount }}
+        </button>
+      </div>
+    </div>
+
+    <!-- MODAL 2: FAVORITEN-LISTE -->
+    <div v-if="favoritesModal" class="sheet-backdrop" @click.self="favoritesModal = false">
+      <div class="bottom-sheet" :class="{ 'light-theme': !isDarkMode }">
+        <div class="drag-bar"></div>
+        <h3>♥ {{ t.favorites }} ({{ favoriteApartments.length }})</h3>
+
+        <p v-if="favoriteApartments.length === 0" class="member-sub" style="padding: 16px 0;">
+          {{ t.noFavorites }}
+        </p>
+
+        <div v-else class="mini-list">
+          <div
+            v-for="apt in favoriteApartments"
+            :key="apt.id"
+            class="mini-apt-row"
+            @click="openFavoriteListing(apt)"
+          >
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <img :src="apt.imageUrl || DEFAULT_FALLBACK_IMAGE" class="fav-thumb" />
+              <div>
+                <strong>{{ apt.title }}</strong>
+                <div class="member-sub">{{ apt.city }}, {{ apt.district }}</div>
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span class="mini-price">{{ apt.price }} €</span>
+              <button class="remove-fav-x" @click.stop="toggleFavorite(apt.id)">✕</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL 3: DETAILS ANZEIGEN -->
     <div v-if="detailItem" class="fullscreen-modal" :class="{ 'light-theme': !isDarkMode }">
       <div class="modal-inner">
         <div class="detail-header">
@@ -472,7 +663,6 @@ onMounted(() => {
           </div>
         </div>
 
-        <!-- Feste Kontakt-Leiste unten (wenn Telefonnummer angegeben) -->
         <div v-if="detailItem.phone" class="detail-bottom-bar">
           <a
             :href="`https://wa.me/${detailItem.phone.replace(/[^0-9]/g, '')}`"
@@ -488,7 +678,7 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- MODAL 2: VERMIETER-KONTO / PROFIL -->
+    <!-- MODAL 4: VERMIETER-KONTO / PROFIL -->
     <div v-if="selectedLandlord" class="sheet-backdrop" @click.self="selectedLandlord = null">
       <div class="bottom-sheet" :class="{ 'light-theme': !isDarkMode }">
         <div class="drag-bar"></div>
@@ -517,7 +707,7 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- MODAL 3: FILTER -->
+    <!-- MODAL 5: FILTER -->
     <div v-if="filterModal" class="sheet-backdrop" @click.self="filterModal = false">
       <div class="bottom-sheet" :class="{ 'light-theme': !isDarkMode }">
         <div class="drag-bar"></div>
@@ -525,7 +715,7 @@ onMounted(() => {
 
         <label class="field-label">{{ t.rentalPeriod }}</label>
         <div class="segment-row">
-          <button :class="['seg-btn', { active: filterType === 'ALL' }]" @click="filterType = 'ALL'">{{ t.allFeeds }}</button>
+          <button :class="['seg-btn', { active: filterType === 'ALL' }]" @click="filterType = 'ALL'">All</button>
           <button :class="['seg-btn', { active: filterType === 'Langzeit' }]" @click="filterType = 'Langzeit'">{{ t.longTerm }}</button>
           <button :class="['seg-btn', { active: filterType === 'Kurzzeit' }]" @click="filterType = 'Kurzzeit'">{{ t.shortTerm }}</button>
         </div>
@@ -546,11 +736,24 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- MODAL 4: EINSTELLUNGEN -->
+    <!-- MODAL 6: EINSTELLUNGEN & KONTO -->
     <div v-if="settingsModal" class="sheet-backdrop" @click.self="settingsModal = false">
       <div class="bottom-sheet" :class="{ 'light-theme': !isDarkMode }">
         <div class="drag-bar"></div>
         <h3>⚙ {{ t.settings }}</h3>
+
+        <!-- Konto-Status im Einstellungsmenü -->
+        <div class="account-card">
+          <div v-if="currentUser">
+            <strong>👤 {{ currentUser.name }}</strong>
+            <div class="member-sub">📞 {{ currentUser.phone }}</div>
+            <button class="logout-btn" @click="handleLogout">{{ t.logout }}</button>
+          </div>
+          <div v-else style="display: flex; justify-content: space-between; align-items: center;">
+            <span>Status: <strong>{{ t.guest }}</strong></span>
+            <button class="insert-btn" @click="settingsModal = false; authModal = true">{{ t.login }}</button>
+          </div>
+        </div>
 
         <label class="field-label">{{ t.theme }}</label>
         <div class="segment-row">
@@ -566,11 +769,14 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- MODAL 5: NEUES INSERAT ERSTELLEN -->
+    <!-- MODAL 7: NEUES INSERAT ERSTELLEN (NUR FÜR ANGEMELDETE NUTZER) -->
     <div v-if="addModal" class="sheet-backdrop" @click.self="!isPublishing && (addModal = false)">
-      <div class="bottom-sheet tall-sheet" :class="{ 'light-theme': !isDarkMode }">
+      <div class="bottom-sheet" :class="{ 'light-theme': !isDarkMode }">
         <div class="drag-bar"></div>
         <h3>{{ t.newListing }}</h3>
+        <p class="member-sub" style="margin-bottom: 12px;">
+          Veröffentlicht als <strong>{{ currentUser?.name }}</strong> ({{ currentUser?.phone }})
+        </p>
 
         <p v-if="formError" class="error-banner">{{ formError }}</p>
 
@@ -579,7 +785,6 @@ onMounted(() => {
           <button :class="['seg-btn orange', { active: newType === 'Kurzzeit' }]" @click="newType = 'Kurzzeit'">{{ t.shortTerm }}</button>
         </div>
 
-        <input v-model="newLandlordName" placeholder="Dein Name / Account-Name *" class="sheet-input" />
         <input v-model="newTitle" placeholder="Titel der Anzeige *" class="sheet-input" />
 
         <div class="two-cols">
@@ -595,11 +800,7 @@ onMounted(() => {
           <input v-model="newDistrict" placeholder="Bezirk" class="sheet-input" />
         </div>
 
-        <div class="two-cols">
-          <input v-model="newSpace" type="number" placeholder="Fläche (m²)" class="sheet-input" />
-          <input v-model="newPhone" placeholder="Telefon / WhatsApp" class="sheet-input" />
-        </div>
-
+        <input v-model="newSpace" type="number" placeholder="Wohnfläche (m²)" class="sheet-input" />
         <input v-model="newImageUrl" placeholder="Bild-URL (optional, z. B. https://...)" class="sheet-input" />
         <textarea v-model="newDesc" placeholder="Beschreibung..." rows="3" class="sheet-input"></textarea>
 
@@ -635,33 +836,35 @@ html, body, #app {
 
 .top-bar {
   position: fixed;
-  top: 22px;
+  top: 20px;
   width: 100%;
   max-width: 560px;
-  padding: 0 16px;
+  padding: 0 14px;
   box-sizing: border-box;
   z-index: 100;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 6px;
 }
 
 .top-left-group, .top-right-group {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
 }
 
 .pill-btn {
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(0, 0, 0, 0.58);
   backdrop-filter: blur(10px);
   color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  padding: 9px 15px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  padding: 8px 12px;
   border-radius: 20px;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .pill-active {
@@ -670,15 +873,50 @@ html, body, #app {
   font-weight: 600;
 }
 
-.circle-icon-btn {
-  background: rgba(0, 0, 0, 0.55);
+.user-pill-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.65);
   backdrop-filter: blur(10px);
   color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  width: 38px;
-  height: 38px;
+  border: 1px solid rgba(52, 199, 89, 0.5);
+  padding: 5px 10px 5px 5px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.user-dot {
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
-  font-size: 18px;
+  background: #34C759;
+  color: #000;
+  font-weight: 700;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.user-label {
+  max-width: 70px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.circle-icon-btn {
+  background: rgba(0, 0, 0, 0.58);
+  backdrop-filter: blur(10px);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  font-size: 16px;
   cursor: pointer;
 }
 
@@ -686,11 +924,12 @@ html, body, #app {
   background: #007AFF;
   color: #fff;
   border: none;
-  padding: 10px 15px;
+  padding: 9px 13px;
   border-radius: 18px;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .reels-feed {
@@ -734,7 +973,7 @@ html, body, #app {
 .right-floating-bar {
   position: absolute;
   right: 16px;
-  top: 46%;
+  top: 48%;
   z-index: 30;
   display: flex;
   flex-direction: column;
@@ -755,6 +994,10 @@ html, body, #app {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.delete-own {
+  border-color: rgba(255, 59, 48, 0.5);
 }
 
 .bottom-overlay {
@@ -790,6 +1033,11 @@ html, body, #app {
   align-items: center;
   justify-content: center;
   font-size: 12px;
+}
+
+.own-tag {
+  color: #34C759;
+  font-weight: 700;
 }
 
 .since-tag {
@@ -1058,6 +1306,25 @@ html, body, #app {
   margin: 0 auto 14px;
 }
 
+.account-card {
+  background: rgba(142, 142, 147, 0.15);
+  padding: 14px;
+  border-radius: 12px;
+  margin-bottom: 14px;
+}
+
+.logout-btn {
+  margin-top: 8px;
+  background: rgba(255, 59, 48, 0.2);
+  color: #FF3B30;
+  border: 1px solid rgba(255, 59, 48, 0.4);
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .field-label {
   display: block;
   font-size: 13px;
@@ -1153,6 +1420,24 @@ html, body, #app {
   border-radius: 10px;
   margin-bottom: 8px;
   cursor: pointer;
+}
+
+.fav-thumb {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.remove-fav-x {
+  background: rgba(255, 59, 48, 0.2);
+  color: #FF3B30;
+  border: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-weight: bold;
 }
 
 .mini-price {
